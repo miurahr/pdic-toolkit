@@ -1,0 +1,166 @@
+#========================================================================
+#
+# pdic_utf8.pl
+#
+# Copyright (c) 2002 Tsutomu Kuroda <tkrd@mail.com> All rights reserved.
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the same terms as Perl itself.
+#
+#========================================================================
+
+require v5.6.1;
+
+use strict;
+use warnings;
+use open IN => ':raw', OUT => ':raw';
+
+use PDIC::Reader;
+use Lingua::EL::Unicode;
+
+use Getopt::Long;
+use Jcode;
+
+use vars qw(@ISA $VERSION $DEBUG);
+
+$VERSION = '1.13'; # $Date: 2002/02/24 12:44:00 $
+$DEBUG = 0;
+
+use vars qw($EXT0 $EXT1);
+
+$EXT0 = 'dic';
+$EXT1 = 'txt';
+
+our @PROPERTIES = qw{
+    headword
+    definition
+    example
+    level
+    marked
+    revised
+};
+
+MAIN: {
+    
+    my $time = time;
+    
+    #------------------------------------------------------------------
+    # 
+    #------------------------------------------------------------------
+    
+    my $filter;
+    GetOptions(
+        'filter:s' => \$filter,
+    );
+    
+    if (defined $filter) {
+        require $filter;
+        unless (defined &MY::Filter::filter) {
+            die("The library '$filter' does not define &MY::Filter::filter.");
+        }
+    }
+    
+    #------------------------------------------------------------------
+    # 
+    #------------------------------------------------------------------
+    
+    my $filename0 = $ARGV[0];
+    $filename0 =~ /(\.$EXT0)?$/;
+    my $filename = $`;
+    
+    $filename0 = "$filename.$EXT0";
+    
+    if (not -e $filename0) {
+        die("'$filename0' does not exist.");
+    }
+    
+    my $filename1 = $ARGV[1];
+    
+    if (not defined $filename1) {
+        $filename1 = "$filename.$EXT1";
+    }
+    elsif (not $filename1 =~ /\.$EXT1$/) {
+        $filename1 = "$filename1.$EXT1";
+    }
+    
+    if (-e $filename1) {
+        my $i = 1;
+        {
+            if (-e "$filename1.$i~") {
+                $i++;
+                redo;
+            }
+            rename($filename1, "$filename1.$i~")
+            or die("'$filename1' is read-only or locked by some other process.");
+        }
+    }
+    
+    #------------------------------------------------------------------
+    # 
+    #------------------------------------------------------------------
+    
+    my $ja = new Jcode;
+    my $el = new Lingua::EL::Unicode;
+    
+    open(IN, "< $filename0") or die("Can't open '$filename0'");
+    my $obj_reader = new PDIC::Reader(*IN{IO});
+    
+    open(OUT, "> $filename1") or die("Can't open $filename1");
+    
+    my $indices = $obj_reader->get_indices();
+    
+    my $num_entries = 0;
+    my $index;
+    foreach $index (@$indices) {
+        my $entries = $obj_reader->get_data_section($index->{data_block_number});
+        
+        my $entry;
+        foreach $entry (@$entries) {
+            
+            my $property;
+            foreach $property (@PROPERTIES) {
+                if ($property eq 'definition') {
+                    Jcode::convert(\$entry->{$property}, 'utf8', 'sjis');
+                }
+                else {
+                    $el->to_utf8(\$entry->{$property}, 'win');
+                }
+            }
+            
+            if (defined $filter and not MY::Filter::filter($entry)) {
+                next;
+            }
+            
+            foreach $property (@PROPERTIES) {
+                escape(\$entry->{$property});
+                print OUT $entry->{$property}, "\n";
+            }
+            
+            print OUT "\n";
+            $num_entries++;
+        }
+    }
+    
+    close(OUT);
+    
+    print "$filename1 was successfully created.\n";
+    printf("duration     : %8d sec.\n", time - $time);
+    printf("num entries  : %8d\n", $num_entries);
+}
+
+sub escape {
+    my $ref = shift;
+    
+    if (defined $$ref and $$ref ne '') {
+        if ($$ref eq '.') {
+            $$ref = "\\.";
+        }
+        else {
+            $$ref =~ s/\\/\\{bs}/g;
+            $$ref =~ s/\r?\n/ \\\\ /g;
+        }
+    }
+    else {
+        $$ref = '.';
+    }
+}

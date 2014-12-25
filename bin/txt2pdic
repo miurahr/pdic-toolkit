@@ -1,0 +1,172 @@
+#========================================================================
+#
+# txt2pdic.pl
+#
+# Copyright (c) 2002 Tsutomu Kuroda <tkrd@mail.com> All rights reserved.
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the same terms as Perl itself.
+#
+#========================================================================
+
+use strict;
+use warnings;
+
+use PDIC::Writer;
+
+use English;
+use Getopt::Long;
+
+use vars qw($VERSION $DEBUG);
+
+$VERSION = '1.13'; # $Date: 2002/02/24 12:44:00 $
+$DEBUG = 0;
+
+use vars qw(@PROPERTIES);
+
+@PROPERTIES = qw{
+    headword
+    pronunciation
+    definition
+    example
+    level
+    marked
+    revised
+};
+
+use vars qw($EXT0 $EXT1);
+
+$EXT0 = 'txt';
+$EXT1 = 'dic';
+
+MAIN: {
+    
+    my $time = time;
+    
+    #------------------------------------------------------------------
+    # 
+    #------------------------------------------------------------------
+    
+    my $filter;
+    GetOptions(
+        'filter:s' => \$filter,
+    );
+    
+    if (defined $filter) {
+        warn("WARNING: 'txt2pdic' does not support filtering.");
+    }
+    
+    #------------------------------------------------------------------
+    # 
+    #------------------------------------------------------------------
+    
+    my $filename0 = $ARGV[0];
+    $filename0 =~ /(\.$EXT0)?$/;
+    my $filename = $`;
+    
+    $filename0 = "$filename.$EXT0";
+    
+    if (not -e $filename0) {
+        die("'$filename0' does not exist.");
+    }
+    
+    my $filename1 = $ARGV[1];
+    
+    if (not defined $filename1) {
+        $filename1 = "$filename.$EXT1";
+    }
+    elsif (not $filename1 =~ /\.$EXT1$/) {
+        $filename1 = "$filename1.$EXT1";
+    }
+    
+    if (-e $filename1) {
+        my $i = 1;
+        {
+            if (-e "$filename1.$i~") {
+                $i++;
+                redo;
+            }
+            rename($filename1, "$filename1.$i~")
+            or die("'$filename1' is read-only or locked by some other process.");
+        }
+    }
+    
+    #------------------------------------------------------------------
+    # 
+    #------------------------------------------------------------------
+    
+    # Treat two or more consecutive empty lines as separator
+    local $INPUT_RECORD_SEPARATOR = '';
+    
+    open(IN, "< $filename0") or die("Can't open $filename0");
+    
+    my $counter = 0;
+    my $sum_length = 0;
+    
+    while (<IN>) {
+        $counter++;
+        /^.*/;
+        $sum_length += length($&);
+    }
+    
+    close(IN);
+    
+    my $average = int($sum_length / $counter) + 1;
+    
+    my $writer = new PDIC::Writer($filename1, $counter, $average);
+    
+    $writer->prepare();
+    
+    open(IN, "< $filename0") or die("Can't open $filename0");
+    
+    while (<IN>) {
+        my @values = split("\n", $_);
+        
+        if ($#values != $#PROPERTIES) {
+            next;
+        }
+        
+        my $entry = {};
+        my $i;
+        for ($i = 0; $i <= $#values; $i++) {
+            $entry->{$PROPERTIES[$i]} = expand($values[$i]);
+        }
+        
+        if ($entry->{example} ne '' or $entry->{pronunciation} ne '') {
+            $entry->{extended} = 1;
+        }
+        else {
+            $entry->{extended} = 0;
+        }
+        
+        $writer->add_entry($entry);
+    }
+    
+    close(IN);
+    
+    $writer->finish();
+    
+    my $stat = $writer->get_stat();
+    
+    print "$filename1 was successfully created.\n";
+    printf("num entries  : %8d\n", $stat->{num_entries});
+    printf("index size   : %8.2f KB\n", $stat->{num_index_blocks} / 4);
+    printf("data size    : %8.2f KB\n", $stat->{num_data_blocks}  / 4);
+    printf("storage rate : %8.2f %%\n", $stat->{storage_rate} * 100);
+}
+
+sub expand {
+    my $value = shift;
+    
+    if ($value eq "\.") {
+        return '';
+    }
+    elsif ($value eq "\\.") {
+        return '.';
+    }
+    else {
+        $value =~ s/ *\\\\ */\n/g;
+        $value =~ s/\\\{bs\}/\\/g;
+        return $value;
+    }
+}

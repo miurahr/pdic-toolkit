@@ -1,0 +1,189 @@
+#========================================================================
+#
+# utf8_pdic.pl
+#
+# Copyright (c) 2002 Tsutomu Kuroda <tkrd@mail.com> All rights reserved.
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the same terms as Perl itself.
+#
+#========================================================================
+
+require v5.6.1;
+
+use strict;
+use warnings;
+use open IN => ':raw', OUT => ':raw';
+
+use PDIC::Writer;
+use Lingua::EL::Unicode;
+
+use Getopt::Long;
+use Jcode;
+use English;
+
+use vars qw($VERSION $DEBUG);
+
+$VERSION = '1.13'; # $Date: 2002/02/24 12:31:00 $
+$DEBUG = 0;
+
+use vars qw($EXT0 $EXT1);
+
+$EXT0 = 'txt';
+$EXT1 = 'dic';
+
+use vars qw(@PROPERTIES);
+
+@PROPERTIES = qw{
+    headword
+    definition
+    example
+    level
+    marked
+    revised
+};
+
+MAIN: {
+    
+    my $time = time;
+    
+    #------------------------------------------------------------------
+    # 
+    #------------------------------------------------------------------
+    
+    my $filter;
+    GetOptions(
+        'filter:s' => \$filter,
+    );
+    
+    if (defined $filter) {
+        require $filter;
+        unless (defined &MY::Filter::filter) {
+            die("The library '$filter' does not define &MY::Filter::filter.");
+        }
+    }
+    
+    #------------------------------------------------------------------
+    # 
+    #------------------------------------------------------------------
+    
+    my $filename0 = $ARGV[0];
+    $filename0 =~ /(\.$EXT0)?$/;
+    my $filename = $`;
+    
+    $filename0 = "$filename.$EXT0";
+    
+    if (not -e $filename0) {
+        die("'$filename0' does not exist.");
+    }
+    
+    my $filename1 = $ARGV[1];
+    
+    if (not defined $filename1) {
+        $filename1 = "$filename.$EXT1";
+    }
+    elsif (not $filename1 =~ /\.$EXT1$/) {
+        $filename1 = "$filename1.$EXT1";
+    }
+    
+    if (-e $filename1) {
+        my $i = 1;
+        {
+            if (-e "$filename1.$i~") {
+                $i++;
+                redo;
+            }
+            rename($filename1, "$filename1.$i~")
+            or die("'$filename1' is read-only or locked by some other process.");
+        }
+    }
+    
+    #------------------------------------------------------------------
+    # 
+    #------------------------------------------------------------------
+    
+    my $ja = new Jcode;
+    my $el = new Lingua::EL::Unicode;
+    
+    open(IN, "< $filename0") or die("Can't open '$filename0'");
+    # Treat two or more consecutive empty lines as separator
+    local $INPUT_RECORD_SEPARATOR = '';
+    
+    my $writer = new PDIC::Writer($filename1, 10000, 10);
+    
+    $writer->prepare();
+    
+    open(IN, "< $filename0") or die("Can't open $filename0");
+    
+    while (<IN>) {
+        my @values = split("\n", $_);
+        
+        if ($#values != $#PROPERTIES) {
+            next;
+        }
+        
+        my $entry = {
+            headword => '',
+            pronunciation => '',
+            definition => '',
+            example => '',
+            level => 0,
+            marked => 0,
+            revised => 0,
+            extended => 0,
+        };
+        
+        my $i;
+        for ($i = 0; $i <= $#values; $i++) {
+            $entry->{$PROPERTIES[$i]} = expand($values[$i]);
+        }
+        
+        if ($entry->{pronunciation} ne '' or $entry->{example} ne '') {
+            $entry->{extended} = 1;
+        }
+        else {
+            $entry->{extended} = 0;
+        }
+        
+        if (defined $filter and not MY::Filter::filter($entry)) {
+            next;
+        }
+        
+        $el->to_win(\$entry->{headword}, 'utf8');
+        $el->to_win(\$entry->{pronunciation}, 'utf8');
+        Jcode::convert(\$entry->{definition}, 'sjis', 'utf8');
+        $el->to_win(\$entry->{example}, 'utf8');
+        
+        $writer->add_entry($entry);
+    }
+    
+    close(IN);
+    
+    $writer->finish();
+    
+    my $stat = $writer->get_stat();
+    
+    print "$filename1 was successfully created.\n";
+    printf("duration     : %8d sec.\n", time - $time);
+    printf("num entries  : %8d\n", $stat->{num_entries});
+    printf("index size   : %8.2f KB\n", $stat->{num_index_blocks} / 4);
+    printf("data size    : %8.2f KB\n", $stat->{num_data_blocks}  / 4);
+    printf("storage rate : %8.2f %%\n", $stat->{storage_rate} * 100);
+}
+
+sub expand {
+    my $value = shift;
+    
+    if ($value eq '.') {
+        return '';
+    }
+    elsif ($value eq "\\.") {
+        return '.';
+    }
+    else {
+        $value =~ s/ *\\\\ */\r\n/g;
+        $value =~ s/\\\{bs\}/\\/g;
+        return $value;
+    }
+}
+

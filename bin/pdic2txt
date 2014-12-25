@@ -1,0 +1,145 @@
+#========================================================================
+#
+# pdic2txt.pl
+#
+# Copyright (c) 2002 Tsutomu Kuroda <tkrd@mail.com> All rights reserved.
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the same terms as Perl itself.
+#
+#========================================================================
+
+use strict;
+use warnings;
+
+use PDIC::Reader;
+
+use Getopt::Long;
+
+use vars qw($VERSION $DEBUG);
+
+$VERSION = '1.13'; # $Date: 2002/02/24 11:35:00 $
+$DEBUG = 0;
+
+use vars qw(@PROPERTIES);
+
+@PROPERTIES = qw{
+    headword
+    pronunciation
+    definition
+    example
+    level
+    marked
+    revised
+};
+
+use vars qw($EXT0 $EXT1);
+
+$EXT0 = 'dic';
+$EXT1 = 'txt';
+
+MAIN: {
+    
+    my $time = time;
+    
+    #------------------------------------------------------------------
+    # 
+    #------------------------------------------------------------------
+    
+    my $filter;
+    GetOptions(
+        'filter:s' => \$filter,
+    );
+    
+    if (defined $filter) {
+        warn("WARNING: 'pdic2txt' does not support filtering.");
+    }
+    
+    #------------------------------------------------------------------
+    # 
+    #------------------------------------------------------------------
+    
+    my $filename0 = $ARGV[0];
+    $filename0 =~ /(\.$EXT0)?$/;
+    my $filename = $`;
+    
+    $filename0 = "$filename.$EXT0";
+    
+    if (not -e $filename0) {
+        die("'$filename0' does not exist.");
+    }
+    
+    my $filename1 = $ARGV[1];
+    
+    if (not defined $filename1) {
+        $filename1 = "$filename.$EXT1";
+    }
+    elsif (not $filename1 =~ /\.$EXT1$/) {
+        $filename1 = "$filename1.$EXT1";
+    }
+    
+    if (-e $filename1) {
+        my $i = 1;
+        {
+            if (-e "$filename1.$i~") {
+                $i++;
+                redo;
+            }
+            rename($filename1, "$filename1.$i~")
+            or die("'$filename1' is read-only or locked by some other process.");
+        }
+    }
+    
+    #------------------------------------------------------------------
+    # 
+    #------------------------------------------------------------------
+    
+    my $obj_reader = new PDIC::Reader($filename0);
+    
+    open(OUT, "> $filename1") or die("Can't open $filename1");
+    
+    my $indices = $obj_reader->get_indices();
+    
+    my $num_entries = 0;
+    
+    my $index;
+    foreach $index (@$indices) {
+        my $entries = $obj_reader->get_data_section($index->{data_block_number});
+        
+        my $entry;
+        foreach $entry (@$entries) {
+            
+            my $property;
+            foreach $property (@PROPERTIES) {
+                output($entry->{$property});
+            }
+            
+            print OUT "\n";
+            $num_entries++;
+        }
+    }
+    
+    close(OUT);
+    
+    print "$filename1 was successfully created.\n";
+    printf("duration     : %8d sec. (%d sec).\n", time - $time);
+    printf("num entries  : %8d\n", $num_entries);
+}
+
+sub output {
+    my $value = shift;
+    
+    if (defined $value and $value ne '') {
+        if ($value eq '.') {
+            print OUT "\\.\n";
+        }
+        else {
+            $value =~ s/\\/\\{bs}/g;
+            $value =~ s/\r?\n/ \\\\ /g;
+            print OUT $value, "\n";
+        }
+    }
+    else {
+        print OUT ".\n";
+    }
+}

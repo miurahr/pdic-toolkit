@@ -1,0 +1,193 @@
+#========================================================================
+#
+# pdic_xml.pl
+#
+# Copyright (c) 2002 Tsutomu Kuroda <tkrd@mail.com> All rights reserved.
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the same terms as Perl itself.
+#
+#========================================================================
+
+require v5.6.1;
+
+use strict;
+use open IN => ':raw', OUT => ':raw';
+
+use PDIC::Reader;
+use Lingua::EL::Unicode;
+
+use Getopt::Long;
+use Jcode;
+
+use vars qw($VERSION $DEBUG);
+
+$VERSION = '1.14'; # $Date: 2002/03/02 09:30:00 $
+$DEBUG = 0;
+
+use vars qw($EXT0 $EXT1);
+
+$EXT0 = 'dic';
+$EXT1 = 'xml';
+
+MAIN: {
+    
+    my $time = time;
+    
+    #------------------------------------------------------------------
+    # 
+    #------------------------------------------------------------------
+    
+    my $filter;
+    my $style;
+    GetOptions(
+        'filter:s' => \$filter,
+        'style:s' => \$style,
+    );
+    
+    if (defined $filter) {
+        require $filter;
+    }
+    
+    #------------------------------------------------------------------
+    # 
+    #------------------------------------------------------------------
+    
+    my $filename0 = $ARGV[0];
+    $filename0 =~ /(\.$EXT0)?$/;
+    my $filename = $`;
+    
+    $filename0 = "$filename.$EXT0";
+    
+    if (not -e $filename0) {
+        die("'$filename0' does not exist.");
+    }
+    
+    my $filename1 = $ARGV[1];
+    
+    if (not defined $filename1) {
+        $filename1 = "$filename.$EXT1";
+    }
+    elsif (not $filename1 =~ /\.$EXT1$/) {
+        $filename1 = "$filename1.$EXT1";
+    }
+    
+    if (-e $filename1) {
+        my $i = 1;
+        {
+            if (-e "$filename1.$i~") {
+                $i++;
+                redo;
+            }
+            rename($filename1, "$filename1.$i~")
+            or die("'$filename1' is read-only or locked by some other process.");
+        }
+    }
+    
+    #------------------------------------------------------------------
+    # 
+    #------------------------------------------------------------------
+    
+    my $ja = new Jcode;
+    my $el = new Lingua::EL::Unicode;
+    
+    open(IN, "< $filename0") or die("Can't open '$filename0'");
+    my $obj_reader = new PDIC::Reader(*IN{IO});
+    
+    open(OUT, "> $filename1") or die("Can't open '$filename1'");
+    
+    my $indices = $obj_reader->get_indices();
+    
+    print OUT qq!<?xml version="1.0" standalone="yes" ?>\n!;
+    
+    if (defined $style) {
+        if ($style eq '') {
+            $style = "default.xsl";
+        }
+        elsif ($style !~ /\.xsl$/) {
+            $style = "$style.xsl";
+        }
+        print OUT qq!<?xml-stylesheet type="text/xsl" href="$style"?>\n!;
+    }
+    
+    print OUT "<dictionary>\n";
+    
+    my $num_entries = 0;
+    
+    my $index;
+    foreach $index (@$indices) {
+        my $entries = $obj_reader->get_data_section($index->{data_block_number});
+        
+        my $entry;
+        foreach $entry (@$entries) {
+            
+            $el->to_utf8(\$entry->{headword});
+            
+            $el->to_utf8(\$entry->{example});
+            $entry->{example} =~ s/\r//g;
+            
+            $ja->set($entry->{definition}, 'sjis');
+            $entry->{definition} = $ja->utf8();
+            $entry->{definition} =~ s/\r//g;
+            
+            if (defined $filter and not MY::Filter::filter($entry)) {
+                next;
+            }
+            
+            escape(\$entry->{headword});
+            escape(\$entry->{example});
+            escape(\$entry->{definition});
+            
+            output($entry);
+            
+            $num_entries++;
+        }
+        
+    }
+    
+    print OUT "</dictionary>\n";
+    
+    close(OUT);
+    
+    print "$filename1 was successfully created.\n";
+    printf("duration     : %8d sec.\n", time - $time);
+    printf("num entries  : %8d\n", $num_entries);
+}
+
+sub output {
+    my $entry = shift;
+    
+    print OUT "<entry>\n";
+    print OUT "<headword>$entry->{headword}</headword>\n";
+    print OUT "<definition>";
+    print OUT $entry->{definition};
+    print OUT "</definition>\n";
+    print OUT "<example>";
+    print OUT $entry->{example};
+    print OUT "</example>\n";
+    print OUT "<level>$entry->{level}</level>\n";
+    print OUT "<marked>$entry->{marked}</marked>\n";
+    print OUT "<revised>$entry->{revised}</revised>\n";
+    print OUT "</entry>\n";
+}
+
+sub escape {
+    my $ref = shift;
+    
+    $$ref =~ s{[<>&\"]}{
+        if ($& eq '<') {
+            '&lt;';
+        }
+        elsif ($& eq '>') {
+            '&gt;';
+        }
+        elsif ($& eq '&') {
+            '&amp;';
+        }
+        elsif ($& eq '"') {
+            '&quot;';
+        }
+    }segx;
+    
+}
+

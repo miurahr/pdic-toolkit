@@ -1,0 +1,205 @@
+#========================================================================
+#
+# xml_pdic.pl
+#
+# Copyright (c) 2002 Tsutomu Kuroda <tkrd@mail.com> All rights reserved.
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the same terms as Perl itself.
+#
+#========================================================================
+
+require v5.6.1;
+use strict;
+use warnings;
+use open IN => ':raw', OUT => ':raw';
+
+use PDIC::Writer;
+use Lingua::EL::Unicode;
+
+use XML::Parser;
+use Jcode;
+use Getopt::Long;
+
+use vars qw($VERSION $DEBUG);
+
+$VERSION = '1.13'; # $Date: 2002/02/24 12:45:00 $
+$DEBUG = 0;
+
+#----------------------------------------------------------------------
+# MY::Handler
+#----------------------------------------------------------------------
+package MY::Handler;
+
+my $Writer;
+my $EL = new Lingua::EL::Unicode;
+my $JA = new Jcode;
+
+my $Start_time = time;
+my $Current_node = undef;
+my $Node_stack = [];
+my $File_name;
+my $Entry = undef;
+my $Filter = undef;
+my $Counter = 0;
+
+sub init {
+    $File_name = shift;
+    $Filter = shift;
+    
+    $Writer = PDIC::Writer->new($File_name, 10000, 10);
+    $Writer->prepare();
+}
+
+sub start_document {
+    my $expat = shift;
+    my $doc = shift;
+    
+}
+
+sub end_document {
+    my $expat = shift;
+    my $doc = shift;
+    
+    $Writer->finish();
+    
+    my $stat = $Writer->get_stat();
+    
+    printf("%s was successfully created.\n", $File_name);
+    printf("duration     : %8d sec.\n", time - $Start_time);
+    printf("num entries  : %8d\n", $stat->{num_entries});
+    printf("index size   : %8.2f KB\n", $stat->{num_index_blocks} / 4);
+    printf("data size    : %8.2f KB\n", $stat->{num_data_blocks}  / 4);
+    printf("storage rate : %8.2f %%\n", $stat->{storage_rate} * 100);
+}
+
+sub start_element {
+    my $expat = shift;
+    my $el = shift;
+    push(@{$Node_stack}, $el);
+    if ($el eq 'entry') {
+        $Entry = {
+            headword => '',
+            pronunciation => '',
+            definition => '',
+            example => '',
+            level => 0,
+            marked => 0,
+            revised => 0,
+            extended => 0,
+        };
+    }
+}
+
+sub end_element {
+    my $expat = shift;
+    my $el = shift;
+    
+    my $name = pop(@{$Node_stack});
+    
+    if ($el eq 'entry') {
+        if (not defined $Filter or MY::Filter::filter($Entry)) {
+            
+            $EL->to_win(\$Entry->{headword}, 'utf8');
+            $EL->to_win(\$Entry->{pronunciation}, 'utf8');
+            $Entry->{definition} = $JA->set(\$Entry->{definition}, 'utf8')->sjis;
+            $EL->to_win(\$Entry->{example}, 'utf8');
+            
+            $Writer->add_entry($Entry);
+        }
+    }
+}
+
+sub characters {
+    my $expat = shift;
+    my $ch = shift;
+    
+    my $node = $$Node_stack[-1];
+    
+    if ($node eq 'element') {
+        return;
+    }
+    elsif ($node eq 'headword' or $node eq 'definition') {
+        $Entry->{$node} .= $ch;
+    }
+    elsif ($node eq 'pronunciation' or $node eq 'example') {
+        $Entry->{$node} .= $ch;
+        $Entry->{extended} = 1;
+    }
+    else {
+        $Entry->{$node} = $ch;
+    }
+}
+
+#----------------------------------------------------------------------
+# main
+#----------------------------------------------------------------------
+package main;
+
+our $EXT0 = 'xml';
+our $EXT1 = 'dic';
+
+MAIN: {
+    my $filter;
+    GetOptions(
+        'filter:s' => \$filter,
+    );
+    
+    if (defined $filter) {
+        require $filter;
+    }
+    
+    #------------------------------------------------------------------
+    # 
+    #------------------------------------------------------------------
+    
+    my $filename0 = $ARGV[0];
+    $filename0 =~ /(\.$EXT0)?$/;
+    my $filename = $`;
+    
+    $filename0 = "$filename.$EXT0";
+    
+    if (not -e $filename0) {
+        die("'$filename0' does not exist.");
+    }
+    
+    my $filename1 = $ARGV[1];
+    
+    if (not defined $filename1) {
+        $filename1 = "$filename.$EXT1";
+    }
+    elsif (not $filename1 =~ /\.$EXT1$/) {
+        $filename1 = "$filename1.$EXT1";
+    }
+    
+    if (-e $filename1) {
+        my $i = 1;
+        {
+            if (-e "$filename1.$i~") {
+                $i++;
+                redo;
+            }
+            rename($filename1, "$filename1.$i~")
+            or die("'$filename1' is read-only or locked by some other process.");
+        }
+    }
+    
+    #------------------------------------------------------------------
+    # 
+    #------------------------------------------------------------------
+    
+    my $parser = XML::Parser->new();
+    
+    $parser->setHandlers(
+        Init => \&MY::Handler::start_document,
+        Final => \&MY::Handler::end_document,
+        Start => \&MY::Handler::start_element,
+        End => \&MY::Handler::end_element,
+        Char => \&MY::Handler::characters,
+    );
+    
+    MY::Handler::init($filename1, $filter);
+    
+    $parser->parsefile($filename0);
+    
+}
