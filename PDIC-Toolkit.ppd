@@ -1,0 +1,10 @@
+<SOFTPKG NAME="PDIC-Toolkit" VERSION="1,15,0,0">
+	<TITLE>PDIC-Toolkit</TITLE>
+	<ABSTRACT>Perl modules and scripts for manipulating PDIC files</ABSTRACT>
+	<AUTHOR>Tsutomu Kuroda</AUTHOR>
+	<IMPLEMENTATION>
+		<OS NAME="MSWin32" />
+		<ARCHITECTURE NAME="MSWin32-x86-multi-thread" />
+		<CODEBASE HREF="packages/PDIC-Toolkit.tar.gz" />
+	</IMPLEMENTATION>
+</SOFTPKG>
